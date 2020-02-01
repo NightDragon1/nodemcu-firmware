@@ -370,7 +370,7 @@ espconn_sent(struct espconn *espconn, uint8 *psent, uint16 length)
 	espconn_msg *pnode = NULL;
 	bool value = false;
 	err_t error = ESPCONN_OK;
-	
+
     if (espconn == NULL || psent == NULL || length == 0) {
         return ESPCONN_ARG;
     }
@@ -441,6 +441,7 @@ sint16 ICACHE_FLASH_ATTR espconn_recv(struct espconn *espconn, void *mem, size_t
 	espconn_msg *pnode = NULL;
 	bool value = false;
 	int bytes_used = 0;
+	struct tcp_pcb *tpcb = NULL;
 	if (espconn == NULL || mem == NULL || len == 0)
 		return ESPCONN_ARG;
 
@@ -454,13 +455,15 @@ sint16 ICACHE_FLASH_ATTR espconn_recv(struct espconn *espconn, void *mem, size_t
 					len = bytes_used;
 				}
 				ringbuf_memcpy_from(mem, pnode->readbuf, len);
-				espconn_recv_unhold(pnode->pespconn);
+				tpcb = pnode->pcommon.pcb;
+				if (tpcb && tpcb->state == ESTABLISHED)
+				    tcp_recved(pnode->pcommon.pcb, len);
 				return len;
 			} else {
 				return ESPCONN_OK;
 			}
 		} else{
-			return ESPCONN_OK;
+			return ESPCONN_MEM;
 		}
 	} else{
 		return ESPCONN_ARG;
@@ -1102,6 +1105,8 @@ espconn_set_opt(struct espconn *espconn, uint8 opt)
 	if (value) {
 		pnode->pcommon.espconn_opt |= opt;
 		tpcb = pnode->pcommon.pcb;
+		if (NULL == tpcb)
+			return ESPCONN_OK;
 		if (espconn_delay_disabled(pnode))
 			tcp_nagle_disable(tpcb);
 
@@ -1140,7 +1145,8 @@ espconn_clear_opt(struct espconn *espconn, uint8 opt)
 		tpcb = pnode->pcommon.pcb;
 		if (espconn_keepalive_enabled(pnode))
 			espconn_keepalive_disable(tpcb);
-
+		if (NULL == tpcb)
+			return ESPCONN_OK;
 		if (espconn_delay_enabled(pnode))
 			tcp_nagle_enable(tpcb);
 
@@ -1173,6 +1179,8 @@ sint8 ICACHE_FLASH_ATTR espconn_set_keepalive(struct espconn *espconn, uint8 lev
 	value = espconn_find_connection(espconn, &pnode);
 	if (value && espconn_keepalive_disabled(pnode)) {
 		struct tcp_pcb *pcb = pnode->pcommon.pcb;
+		if (NULL == pcb)
+			return ESPCONN_OK;
 		switch (level){
 			case ESPCONN_KEEPIDLE:
 				pcb->keep_idle = 1000 * (u32_t)(*(int*)optarg);
@@ -1218,6 +1226,8 @@ sint8 ICACHE_FLASH_ATTR espconn_get_keepalive(struct espconn *espconn, uint8 lev
 	value = espconn_find_connection(espconn, &pnode);
 	if (value && espconn_keepalive_disabled(pnode)) {
 		struct tcp_pcb *pcb = pnode->pcommon.pcb;
+		if (NULL == pcb)
+			return ESPCONN_OK;
 		switch (level) {
 		case ESPCONN_KEEPIDLE:
 			*(int*)optarg = (int)(pcb->keep_idle/1000);
@@ -1305,7 +1315,7 @@ espconn_port(void)
  * Description  : Resolve a hostname (string) into an IP address.
  * Parameters   : pespconn -- espconn to resolve a hostname
  *                hostname -- the hostname that is to be queried
- *                addr -- pointer to a ip_addr_t where to store the address if 
+ *                addr -- pointer to a ip_addr_t where to store the address if
  *                        it is already cached in the dns_table (only valid if
  *                        ESPCONN_OK is returned!)
  *                found -- a callback function to be called on success, failure

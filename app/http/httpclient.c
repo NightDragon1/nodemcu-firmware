@@ -13,13 +13,14 @@
  */
 
 #include "osapi.h"
-#include "../libc/c_stdio.h"
+#include <stdio.h>
 #include "user_interface.h"
 #include "espconn.h"
 #include "mem.h"
 #include "limits.h"
 #include "httpclient.h"
 #include "stdlib.h"
+#include "pm/swtimer.h"
 
 #define REDIRECTION_FOLLOW_MAX 20
 
@@ -170,7 +171,7 @@ static void ICACHE_FLASH_ATTR http_send_callback( void * arg )
 	{
 		HTTPCLIENT_DEBUG( "All sent" );
 	}
-	else  
+	else
 	{
 		/* The headers were sent, now send the contents. */
 		HTTPCLIENT_DEBUG( "Sending request body" );
@@ -209,26 +210,29 @@ static void ICACHE_FLASH_ATTR http_connect_callback( void * arg )
 
 	char ua_header[32] = "";
     int ua_len = 0;
-    if (os_strstr( req->headers, "User-Agent:" ) == NULL && os_strstr( req->headers, "user-agent:" ) == NULL)
+    if (strcasestr( req->headers, "User-Agent:" ) == NULL )
     {
         os_sprintf( ua_header, "User-Agent: %s\r\n", "ESP8266" );
         ua_len = strlen(ua_header);
     }
 
-	char host_header[32] = "";
+	char * host_header = "";
     int host_len = 0;
-    if ( os_strstr( req->headers, "Host:" ) == NULL && os_strstr( req->headers, "host:" ) == NULL)
+    if ( strcasestr( req->headers, "Host:" ) == NULL )
     {
+        int max_header_len = 9 + strlen(req->hostname); // 9 is fixed size of "Host:[space][cr][lf]\0"
         if ((req->port == 80)
 #ifdef CLIENT_SSL_ENABLE
             || ((req->port == 443) && ( req->secure ))
 #endif
             )
         {
+            host_header = alloca(max_header_len);
             os_sprintf( host_header, "Host: %s\r\n", req->hostname );
         }
         else
         {
+            host_header = alloca(max_header_len + 6); // 6 is worst case of ":port" where port is maximum 5 digits
             os_sprintf( host_header, "Host: %s:%d\r\n", req->hostname, req->port );
         }
         host_len = strlen(host_header);
@@ -320,14 +324,11 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
 			{
 				HTTPCLIENT_ERR( "Invalid version in %s", req->buffer );
 			}
-			else  
+			else
 			{
 				http_status	= atoi( req->buffer + strlen( version_1_0 ) );
 
-				char *locationOffset = (char *) os_strstr( req->buffer, "Location:" );
-				if ( locationOffset == NULL ) {
-					locationOffset = (char *) os_strstr( req->buffer, "location:" );
-				}
+				char *locationOffset = (char *) strcasestr( req->buffer, "Location:" );
 
 				if ( locationOffset != NULL && http_status >= 300 && http_status <= 308 ) {
 					if (req->redirect_follow_count < REDIRECTION_FOLLOW_MAX) {
@@ -410,7 +411,7 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
 						  body = body + 4;
 					}
 
-					if ( os_strstr( req->buffer, "Transfer-Encoding: chunked" ) )
+					if ( strcasestr( req->buffer, "Transfer-Encoding: chunked" ) )
 					{
 						int	body_size = req->buffer_size - (body - req->buffer);
 						char	chunked_decode_buffer[body_size];
@@ -469,7 +470,7 @@ static void ICACHE_FLASH_ATTR http_timeout_callback( void *arg )
 	else
 #endif
 		result = espconn_disconnect( conn );
-		
+
 	if (result == ESPCONN_OK || result == ESPCONN_INPROGRESS)
 		return;
 	else
@@ -477,7 +478,7 @@ static void ICACHE_FLASH_ATTR http_timeout_callback( void *arg )
 		/* not connected; execute the callback ourselves. */
 		HTTPCLIENT_DEBUG( "manually Calling disconnect callback due to error %d", result );
 		http_disconnect_callback( arg );
-	}		
+	}
 }
 
 
@@ -501,7 +502,7 @@ static void ICACHE_FLASH_ATTR http_dns_callback( const char * hostname, ip_addr_
 		}
 		http_free_req( req );
 	}
-	else  
+	else
 	{
 		HTTPCLIENT_DEBUG( "DNS found %s " IPSTR, hostname, IP2STR( addr ) );
 
@@ -522,14 +523,16 @@ static void ICACHE_FLASH_ATTR http_dns_callback( const char * hostname, ip_addr_
 		/* Set connection timeout timer */
 		os_timer_disarm( &(req->timeout_timer) );
 		os_timer_setfn( &(req->timeout_timer), (os_timer_func_t *) http_timeout_callback, conn );
+		SWTIMER_REG_CB(http_timeout_callback, SWTIMER_IMMEDIATE);
+		  //http_timeout_callback frees memory used by this function and timer cannot be dropped
 		os_timer_arm( &(req->timeout_timer), req->timeout, false );
 
 #ifdef CLIENT_SSL_ENABLE
 		if ( req->secure )
 		{
 			espconn_secure_connect( conn );
-		} 
-		else 
+		}
+		else
 #endif
 		{
 			espconn_connect( conn );
@@ -572,7 +575,7 @@ void ICACHE_FLASH_ATTR http_raw_request( const char * hostname, int port, bool s
 		/* Already in the local names table (or hostname was an IP address), execute the callback ourselves. */
 		http_dns_callback( hostname, &addr, req );
 	}
-	else  
+	else
 	{
 		if ( error == ESPCONN_ARG )
 		{
@@ -611,8 +614,8 @@ void ICACHE_FLASH_ATTR http_request( const char * url, const char * method, cons
 		port	= 443;
 		secure	= true;
 		url	+= strlen( "https://" );        /* Get rid of the protocol. */
-	} 
-	else 
+	}
+	else
 	{
 		HTTPCLIENT_ERR( "URL is not HTTP or HTTPS %s", url );
 		return;
@@ -640,7 +643,7 @@ void ICACHE_FLASH_ATTR http_request( const char * url, const char * method, cons
 		os_memcpy( hostname, url, path - url );
 		hostname[path - url] = '\0';
 	}
-	else  
+	else
 	{
 		port = atoi( colon + 1 );
 		if ( port == 0 )

@@ -1,8 +1,8 @@
 #include "module.h"
 #include "lauxlib.h"
 #include "platform.h"
-#include "c_stdlib.h"
-#include "c_string.h"
+#include <stdlib.h>
+#include <string.h>
 
 static const uint32_t bmp085_i2c_id = 0;
 static const uint8_t bmp085_i2c_addr = 0x77;
@@ -61,28 +61,6 @@ static int bmp085_setup(lua_State* L) {
     bmp085_data.MD  = r16(bmp085_i2c_id, 0xBE);
 
     return 0;
-}
-
-static int bmp085_init(lua_State* L) {
-    uint32_t sda;
-    uint32_t scl;
-
-    platform_print_deprecation_note("bmp085.init() is replaced by bmp085.setup()", "in the next version");
-
-    if (!lua_isnumber(L, 1) || !lua_isnumber(L, 2)) {
-        return luaL_error(L, "wrong arg range");
-    }
-
-    sda = luaL_checkinteger(L, 1);
-    scl = luaL_checkinteger(L, 2);
-
-    if (scl == 0 || sda == 0) {
-        return luaL_error(L, "no i2c for D0");
-    }
-
-    platform_i2c_setup(bmp085_i2c_id, sda, scl, PLATFORM_I2C_SPEED_SLOW);
-
-    return bmp085_setup(L);
 }
 
 static uint32_t bmp085_temperature_raw_b5(void) {
@@ -191,14 +169,12 @@ static int bmp085_lua_pressure(lua_State* L) {
     return 1;
 }
 
-static const LUA_REG_TYPE bmp085_map[] = {
-    { LSTRKEY( "temperature" ),  LFUNCVAL( bmp085_lua_temperature )},
-    { LSTRKEY( "pressure" ),     LFUNCVAL( bmp085_lua_pressure )},
-    { LSTRKEY( "pressure_raw" ), LFUNCVAL( bmp085_lua_pressure_raw )},
-    { LSTRKEY( "setup" ),        LFUNCVAL( bmp085_setup )},
-    // init() is deprecated
-    { LSTRKEY( "init" ),         LFUNCVAL( bmp085_init )},
-    { LNILKEY, LNILVAL}
-};
+LROT_BEGIN(bmp085)
+  LROT_FUNCENTRY( temperature, bmp085_lua_temperature )
+  LROT_FUNCENTRY( pressure, bmp085_lua_pressure )
+  LROT_FUNCENTRY( pressure_raw, bmp085_lua_pressure_raw )
+  LROT_FUNCENTRY( setup, bmp085_setup )
+LROT_END( bmp085, NULL, 0 )
 
-NODEMCU_MODULE(BMP085, "bmp085", bmp085_map, NULL);
+
+NODEMCU_MODULE(BMP085, "bmp085", bmp085, NULL);

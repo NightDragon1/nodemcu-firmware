@@ -124,7 +124,7 @@ static void free_netconn(lwIP_netconn *netconn)
     {
         ringbuf_free(&netconn->readbuf);
     }
-    
+
     os_free(netconn);
     netconn = NULL;
 }
@@ -184,11 +184,11 @@ static err_t recv_tcp(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     lwIP_netconn *newconn = arg;
 	err = ESP_OK;
 	lwIP_REQUIRE_ACTION(newconn, exit, err = ESP_ARG);
-    
+
     if (p!= NULL)
     {
         struct pbuf *pthis = NULL;
-        
+
         if (newconn->readbuf != NULL)
         {
             for (pthis = p; pthis != NULL; pthis = pthis->next)
@@ -197,16 +197,16 @@ static err_t recv_tcp(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
                 ringbuf_memcpy_into(newconn->readbuf, pthis->payload, pthis->len);
                 tcp_recved(newconn->tcp, pthis->len);
 				newconn->state = NETCONN_STATE_ESTABLISHED;
-                lwIP_EVENT_PARSE(find_socket(newconn), ERR_OK);                
+                lwIP_EVENT_PARSE(find_socket(newconn), ERR_OK);
             }
 			pbuf_free(p);
         }
         else
-        {           
+        {
             tcp_recved(newconn->tcp, p->tot_len);
             pbuf_free(p);
             err = ERR_MEM;
-        }        
+        }
     }
     else
     {
@@ -228,14 +228,14 @@ static err_t sent_tcp(void *arg, struct tcp_pcb *pcb, u16_t len)
 {
     lwIP_netconn *conn = arg;
     lwIP_ASSERT(conn);
-    conn->state = NETCONN_STATE_ESTABLISHED;                
-	lwIP_EVENT_THREAD(find_socket(conn), NETCONN_EVENT_SEND, len);        
+    conn->state = NETCONN_STATE_ESTABLISHED;
+	lwIP_EVENT_THREAD(find_socket(conn), NETCONN_EVENT_SEND, len);
     return ERR_OK;
 }
 
 static void err_tcp(void *arg, err_t err)
 {
-    lwIP_netconn *conn = arg;       
+    lwIP_netconn *conn = arg;
     lwIP_ASSERT(conn);
     conn->state = NETCONN_STATE_ERROR;
     ESP_LOG("%s %d %p\n",__FILE__, __LINE__, conn->tcp);
@@ -256,7 +256,7 @@ static void err_tcp(void *arg, err_t err)
         default:
             break;
     }
-    
+
     lwIP_EVENT_PARSE(find_socket(conn), err);
     return;
 }
@@ -302,6 +302,20 @@ static err_t do_accepted(void *arg, struct tcp_pcb *newpcb, err_t err)
     lwIP_netconn *newconn = NULL;
     lwIP_netconn *conn = arg;
     err = ERR_OK;
+
+    //Avoid two TCP connections coming in simultaneously
+    struct  tcp_pcb *pactive_pcb;
+    int active_pcb_num=0;
+    for(pactive_pcb = tcp_active_pcbs; pactive_pcb != NULL; pactive_pcb = pactive_pcb->next){
+    	if (pactive_pcb->state == ESTABLISHED ||pactive_pcb->state == SYN_RCVD){
+    		active_pcb_num++;
+                if (active_pcb_num > MEMP_NUM_TCP_PCB){
+                    ESP_LOG("%s %d active_pcb_number:%d\n",__FILE__, __LINE__,active_pcb_num);
+                    return ERR_MEM;
+                }
+    	}
+    }
+
     lwIP_REQUIRE_ACTION(conn, exit, err = ESP_ARG);
     /* We have to set the callback here even though
      * the new socket is unknown. conn->socket is marked as -1. */
@@ -696,7 +710,7 @@ int lwip_send(int s, const void *data, size_t size, int flags)
     {
         return -1;
     }
-	
+
     if (tcp_sndbuf(sock->conn->tcp) < size)
     {
         bytes_used = tcp_sndbuf(sock->conn->tcp);
@@ -721,9 +735,9 @@ int lwip_send(int s, const void *data, size_t size, int flags)
     {
         Err = tcp_output(sock->conn->tcp);
     } else{
-		size = Err; 
+		size = Err;
 	}
-    
+
     return size;
 }
 
@@ -738,23 +752,30 @@ int lwip_close(int s)
         return -1;
     }
 
-	if (sock->conn->state != NETCONN_STATE_ERROR){
-	    tcp_recv(sock->conn->tcp, NULL);
-	    err = tcp_close(sock->conn->tcp);		
+    /*Do not set callback function when tcp->state is LISTEN.
+    Avoid memory overlap when conn->tcp changes from
+    struct tcp_bcb to struct tcp_pcb_listen after lwip_listen.*/
+    if (sock->conn->tcp->state != LISTEN)
+    {
+        if (sock->conn->state != NETCONN_STATE_ERROR){
+            tcp_recv(sock->conn->tcp, NULL);
+            err = tcp_close(sock->conn->tcp);
 
-	    if (err != ERR_OK)
-	    {
-	        /* closing failed, try again later */
-	        tcp_recv(sock->conn->tcp, recv_tcp);
-	        return -1;
-	    }   
-	}
-	
-	/* closing succeeded */
-	remove_tcp(sock->conn);
-	free_netconn(sock->conn);
-	free_socket(sock);
-	return ERR_OK;
+            if (err != ERR_OK)
+            {
+                /* closing failed, try again later */
+                tcp_recv(sock->conn->tcp, recv_tcp);
+                return -1;
+            }
+        }
+        /* closing succeeded */
+        remove_tcp(sock->conn);
+    } else {
+        tcp_close(sock->conn->tcp);
+    }
+    free_netconn(sock->conn);
+    free_socket(sock);
+    return ERR_OK;
 }
 
 int lwip_write(int s, const void *data, size_t size)
@@ -773,7 +794,7 @@ int lwip_write(int s, const void *data, size_t size)
     {
         switch (sock->conn->state)
         {
-            case NETCONN_STATE_ESTABLISHED:                
+            case NETCONN_STATE_ESTABLISHED:
                return lwip_send(s, data, size, 0);
             default:
                 return -1;
