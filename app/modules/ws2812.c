@@ -278,7 +278,8 @@ int ws2812_buffer_shift(lua_State* L, ws2812_buffer * buffer, int shiftValue, un
   ws2812_buffer_shift_prepare* prepare = ws2812_buffer_get_shift_prepare(L, buffer, shiftValue, shift_type, pos_start, pos_end);
   ws2812_buffer_shift_prepared(prepare);
   // Free memory
-  luaM_free(L, prepare);
+  luaM_freemem(L, prepare, sizeof(ws2812_buffer_shift_prepare) + prepare->shift_len);
+
   return 0;
 }
 
@@ -462,7 +463,7 @@ static int ws2812_buffer_power(lua_State* L) {
     total += buffer->values[i];
   }
 
-  lua_pushnumber(L, total);
+  lua_pushinteger(L, total);
 
   return 1;
 }
@@ -476,7 +477,7 @@ static int ws2812_buffer_get(lua_State* L) {
   int i;
   for (i = 0; i < buffer->colorsPerLed; i++)
   {
-    lua_pushnumber(L, buffer->values[buffer->colorsPerLed*led+i]);
+    lua_pushinteger(L, buffer->values[buffer->colorsPerLed*led+i]);
   }
 
   return buffer->colorsPerLed;
@@ -498,7 +499,7 @@ static int ws2812_buffer_set(lua_State* L) {
       lua_rawgeti(L, 3, i+1);
 
       // Convert it as int and store them in buffer
-      buffer->values[buffer->colorsPerLed*led+i] = lua_tonumber(L, -1);
+      buffer->values[buffer->colorsPerLed*led+i] = lua_tointeger(L, -1);
     }
 
     // Clean up the stack
@@ -532,7 +533,7 @@ static int ws2812_buffer_set(lua_State* L) {
 static int ws2812_buffer_size(lua_State* L) {
   ws2812_buffer * buffer = (ws2812_buffer*)luaL_checkudata(L, 1, "ws2812.buffer");
 
-  lua_pushnumber(L, buffer->size);
+  lua_pushinteger(L, buffer->size);
 
   return 1;
 }
