@@ -25,6 +25,7 @@
 #include "mem.h"
 #include "espconn.h"
 #include "sections.h"
+#include "../modules/wifi_common.h"
 
 #ifdef LUA_USE_MODULES_RTCTIME
 #include "rtc/rtctime.h"
@@ -126,11 +127,20 @@ extern void _ResetHandler(void);
  * configure the PT, etc during provisioning.
  */
 void user_pre_init(void) {
+    STARTUP_COUNT; 
 #ifdef LUA_USE_MODULES_RTCTIME
   // Note: Keep this as close to call_user_start() as possible, since it
   // is where the cpu clock actually gets bumped to 80MHz.
     rtctime_early_startup ();
 #endif
+    int startup_option = platform_rcr_get_startup_option();
+
+    if (startup_option & STARTUP_OPTION_CPU_FREQ_MAX) {
+      REG_SET_BIT(0x3ff00014, BIT(0));
+      ets_update_cpu_frequency(SYS_CPU_160MHZ);
+    }
+    int no_banner = startup_option & STARTUP_OPTION_NO_BANNER;
+
     partition_item_t *rcr_pt = NULL, *pt;
     enum flash_size_map fs_size_code = system_get_flash_size_map();
 // Flash size lookup is SIZE_256K*2^N where N is as follows (see SDK/user_interface.h)
@@ -146,7 +156,9 @@ void user_pre_init(void) {
         os_printf("Flash size (%u) too small to support NodeMCU\n", flash_size);
         return;
     } else {
-        os_printf("system SPI FI size:%u, Flash size: %u\n", fs_size_code, flash_size );
+        if (!no_banner) {
+            os_printf("system SPI FI size:%u, Flash size: %u\n", fs_size_code, flash_size );
+        }
     }
 
     pt = os_malloc_iram(i);  // We will work on and register a copy of the PT in iRAM
@@ -167,6 +179,10 @@ void user_pre_init(void) {
 
     // Now register the partition and return
     if( fs_size_code > 1 && system_partition_table_regist(pt, n, fs_size_code)) {
+        if (no_banner) {
+            system_set_os_print(0);
+        }
+        STARTUP_COUNT;
         return;
     }
     os_printf("Invalid system partition table\n");
@@ -293,23 +309,13 @@ uint32 ICACHE_RAM_ATTR user_iram_memory_is_enabled(void) {
 }
 
 void nodemcu_init(void) {
+  STARTUP_COUNT; 
    NODE_DBG("Task task_lua starting.\n");
    // Call the Lua bootstrap startup directly.  This uses the task interface
    // internally to carry out the main lua libraries initialisation.
    if(lua_main())
      lua_main();  // If it returns true then LFS restart is needed
 }
-
-#ifdef LUA_USE_MODULES_WIFI
-#include "../modules/wifi_common.h"
-
-void user_rf_pre_init(void)
-{
-//set WiFi hostname before RF initialization (adds ~479 us to boot time)
-  wifi_change_default_host_name();
-}
-#endif
-
 
 /******************************************************************************
  * FunctionName : user_init
@@ -328,6 +334,9 @@ void user_init(void) {
     }
     UartBautRate br = BIT_RATE_DEFAULT;
     uart_init (br, br);
+#ifdef LUA_USE_MODULES_WIFI
+    wifi_change_default_host_name();
+#endif
 #ifndef NODE_DEBUG
     system_set_os_print(0);
 #endif
